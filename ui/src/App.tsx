@@ -3,11 +3,13 @@ import {
   queryClient,
 } from "./queries/client";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import type { Viewport } from "@xyflow/react";
 
 import {
   type SetStateAction,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -417,6 +419,7 @@ export default function App({ runtime, projectId, pane }: { runtime: RuntimeInfo
   // The right pane is a floating panel: closable, edge-resizable, expandable
   // to (nearly) full screen. Width persists across sessions.
   const [panelMax, setPanelMax] = useState(false);
+  const [treeViewport, setTreeViewport] = useState<Viewport | null>(null);
   const [panelWidth, setPanelWidth] = useState(initialPanelWidth);
   const [workspaceWide, setWorkspaceWide] = useState(() => window.innerWidth >= WORKSPACE_CARD_MIN_WIDTH);
   const workspaceCardVisible = mainView === "chat" && !panelOpen && workspaceWide;
@@ -607,7 +610,8 @@ export default function App({ runtime, projectId, pane }: { runtime: RuntimeInfo
     scope,
     panelOpen,
     panelMax,
-  }), [rightTab, tabHistory, experimentsTabOpen, filesTabOpen, artifactsTabOpen, expTabs, fileTabs, planTabs, subagentTabs, codeTabs, contentTabOrder, previewTab, filesView, filesToggled, selectedRunId, scope, panelOpen, panelMax]);
+    treeViewport,
+  }), [rightTab, tabHistory, experimentsTabOpen, filesTabOpen, artifactsTabOpen, expTabs, fileTabs, planTabs, subagentTabs, codeTabs, contentTabOrder, previewTab, filesView, filesToggled, selectedRunId, scope, panelOpen, panelMax, treeViewport]);
   currentRightPaneStateRef.current = rightPaneState;
   const getFileScroll = useCallback(() => Object.fromEntries(fileScrollPositionsRef.current), []);
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -633,6 +637,7 @@ export default function App({ runtime, projectId, pane }: { runtime: RuntimeInfo
     setFilesToggled(state.filesToggled);
     setScope(state.scope);
     setPanelMax(state.panelMax);
+    setTreeViewport(state.treeViewport);
     setDemoOverviewLeading(navigationRef.current.activeSessionId === DEMO_MAIN_SESSION_ID && state.fileTabs.some((tab) => sameFileTab(tab, { path: DEMO_OVERVIEW_ARTIFACT, source: "artifacts" })));
     if (restored) {
       for (const [key, position] of Object.entries(saved?.scroll ?? {})) fileScrollPositionsRef.current.set(key, position);
@@ -650,6 +655,15 @@ export default function App({ runtime, projectId, pane }: { runtime: RuntimeInfo
     apply: applyWorkspace, getScroll: getFileScroll,
     sourceModes: sourceModesRef.current, revision: metadataRevision,
   });
+  const previousTreeScope = useRef<{ projectId: string | undefined; taskId: string | null; scope: string } | null>(null);
+  useLayoutEffect(() => {
+    if (!workspaceReady || !experimentDataReady || destination?.kind !== "task") return;
+    const previous = previousTreeScope.current;
+    if (previous?.projectId === projectId && previous.taskId === activeSessionId && previous.scope !== effectiveScope) {
+      setTreeViewport(null);
+    }
+    previousTreeScope.current = { projectId, taskId: activeSessionId, scope: effectiveScope };
+  }, [workspaceReady, experimentDataReady, destination?.kind, projectId, activeSessionId, effectiveScope]);
   const onActiveSessionChange = useCallback((sessionId: string | null, options?: { replace?: boolean }) => {
     if (!projectId) return;
     if (sessionId) {
@@ -1785,6 +1799,8 @@ export default function App({ runtime, projectId, pane }: { runtime: RuntimeInfo
                         onOpenCode={openCodeTabForExperiment}
                         agentSessionId={effectiveScope === "agent" ? activeSessionId : null}
                         onShowProjectScope={showProjectScope}
+                        viewport={treeViewport}
+                        onViewportChange={setTreeViewport}
                       />
                     )
                   ) : (
