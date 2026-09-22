@@ -1885,6 +1885,10 @@ export const listChatSessions = (projectId: string, signal?: AbortSignal) =>
     signal,
   ).then((r) => r.sessions);
 
+/** Every project's sessions, newest first, for the composer's `/resume` picker. */
+export const listAllChatSessions = (signal?: AbortSignal) =>
+  get<{ sessions: ChatSession[] }>("/api/chat/sessions?scope=all", signal).then((r) => r.sessions);
+
 /** Per-session (and per-turn) composer selections beyond the harness itself. */
 export interface TurnOptions {
   model?: string | null;
