@@ -64,7 +64,7 @@ import { HtmlPreview } from "./HtmlPreview";
 import { OverleafButton } from "./OverleafPanel";
 import { MediaPreview, mediaPreviewKind } from "./MediaPreview";
 import { Md } from "./Md";
-import { Button, IconButton, IconButtonLink, Spinner } from "./ui";
+import { Button, IconButton, IconButtonLink, Spinner, showAlert } from "./ui";
 
 export interface FileScrollPosition {
   top: number;
@@ -241,6 +241,8 @@ export function FileViewer({
   const saveError = bufferSession.saveError;
   const setSaveError = bufferSession.setSaveError;
   const bodyRef = useRef<HTMLDivElement>(null);
+  const selectableContentRef = useRef<HTMLDivElement>(null);
+  const [copiedContents, setCopiedContents] = useState(false);
   const scrollPositionRef = useRef(scrollPosition);
   const data = loaded?.file ?? null;
   // A cited `artifacts/…` file can answer from either name in the checkout, so
@@ -395,6 +397,41 @@ export function FileViewer({
   const showingEditor = (editable || showingUnsafeDraft) &&
     !(rendersByDefault && !showSource) &&
     !showingPdf;
+  const canCopyContents = data !== null && !data.notFound && !data.binary && !mediaKind && !showingPdf;
+  const canSelectContents = canCopyContents && !showingEditor && (!isHtml || showSource);
+
+  const copyContents = async () => {
+    if (!data) return;
+    try {
+      if (data.truncated && !showingEditor) {
+        // WebKit requires the clipboard write to start during the click.
+        const content = fetch(rawFileUrl(filePath)).then(async (response) => {
+          if (!response.ok) throw new Error();
+          return new Blob([await response.text()], { type: "text/plain" });
+        });
+        await navigator.clipboard.write([new ClipboardItem({ "text/plain": content })]);
+      } else {
+        await navigator.clipboard.writeText(showingEditor ? draft : data.content);
+      }
+      setCopiedContents(true);
+      window.setTimeout(() => setCopiedContents(false), 1500);
+    } catch {
+      showAlert(m.file_viewer_copy_failed(), "error");
+    }
+  };
+
+  const selectViewerContents = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((!event.metaKey && !event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "a") return;
+    if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
+    const content = selectableContentRef.current;
+    if (!content) return;
+    event.preventDefault();
+    const range = document.createRange();
+    range.selectNodeContents(content);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  };
 
   // `#toolbar=0` asks the browser's PDF viewer to drop its own chrome, so the
   // pane shows the document and this view's header owns the controls.
@@ -526,7 +563,7 @@ export function FileViewer({
   };
 
   return (
-    <div className="file-view flex flex-col h-full min-h-0 min-w-0">
+    <div className="file-view flex flex-col h-full min-h-0 min-w-0" onKeyDown={selectViewerContents}>
       <div className="file-view-header flex w-full min-w-0 min-h-9 items-center gap-1 px-4 py-1 bg-background text-text shrink-0">
         <FileTypeIcon name={filePath} />
         <span className="file-view-path flex-1 min-w-0 truncate text-sm text-subtext" data-tip={ltr(filePath)}>
@@ -615,6 +652,17 @@ export function FileViewer({
             onClick={() => onShowSourceChange?.(!showSource)}
           >
             <Code size={13} />
+          </IconButton>
+        )}
+        {canCopyContents && (
+          <IconButton
+            size="small"
+            data-tip={copiedContents ? m.common_copied() : m.file_viewer_copy_contents()}
+            data-tip-align="end"
+            aria-label={copiedContents ? m.common_copied() : m.file_viewer_copy_contents()}
+            onClick={() => void copyContents()}
+          >
+            {copiedContents ? <Check size={13} /> : <Copy size={13} />}
           </IconButton>
         )}
         {data != null && (
@@ -747,6 +795,7 @@ export function FileViewer({
       <div
         ref={bodyRef}
         className="file-view-body flex-1 min-h-0 overflow-auto bg-background"
+        tabIndex={canSelectContents ? 0 : undefined}
         onScroll={(event) => {
           const position = {
             top: Math.max(0, event.currentTarget.scrollTop),
@@ -820,7 +869,7 @@ export function FileViewer({
             downloadBar={false}
           />
         ) : isMarkdown && !showSource ? (
-          <div className="file-view-md max-w-readable pt-4.5 px-5 pb-8 [&_.md]:text-base [&_.md_h1]:text-2xl [&_.md_h1]:mt-4.5 [&_.md_h1]:mx-0 [&_.md_h1]:mb-2 [&_.md_h2]:text-xl [&_.md_h2]:mt-4 [&_.md_h2]:mx-0 [&_.md_h2]:mb-2 [&_.md_h3]:text-lg">
+          <div ref={selectableContentRef} className="file-view-md max-w-readable pt-4.5 px-5 pb-8 [&_.md]:text-base [&_.md_h1]:text-2xl [&_.md_h1]:mt-4.5 [&_.md_h1]:mx-0 [&_.md_h1]:mb-2 [&_.md_h2]:text-xl [&_.md_h2]:mt-4 [&_.md_h2]:mx-0 [&_.md_h2]:mb-2 [&_.md_h3]:text-lg">
             {artifactsMode ? (
               <ArtifactMarkdown
                 projectId={projectId}
@@ -851,13 +900,15 @@ export function FileViewer({
           />
         ) : (
           <>
-            <CodeView
-              text={data.content}
-              path={path}
-              highlightLine={line}
-              scrollRequest={lineScrollRequest}
-              onScrollRequestHandled={onLineScrollRequestHandled}
-            />
+            <div ref={selectableContentRef}>
+              <CodeView
+                text={data.content}
+                path={path}
+                highlightLine={line}
+                scrollRequest={lineScrollRequest}
+                onScrollRequestHandled={onLineScrollRequestHandled}
+              />
+            </div>
             {data.truncated && (
               <div className="file-view-note py-2.5 px-4 text-sm text-muted">{m.file_viewer_file_truncated_showing_the_first_512_kb()}</div>
             )}
